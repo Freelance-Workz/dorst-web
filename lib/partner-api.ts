@@ -107,7 +107,7 @@ export function friendlyPartnerError(
     return (
       "This email is linked to more than one company. " +
       "Each company needs its own login email — ask Dorst support to untangle the accounts, " +
-      "or resend the password using a unique email for this ЕИК."
+      "or request a reset link using a unique email for this ЕИК."
     );
   }
 
@@ -179,7 +179,7 @@ function applyPartnerCatalogDisplay(product: PartnerProduct): PartnerProduct {
 }
 
 export async function registerLookup(eik: string, email: string) {
-  return partnerFetch<{ status: string; draft?: RegistryDraft; company_name?: string }>(
+  return partnerFetch<{ status: 'link_sent' | 'registration_required'; draft?: RegistryDraft }>(
     "/register/lookup",
     { method: "POST", body: JSON.stringify({ eik, email }) },
     false
@@ -187,7 +187,7 @@ export async function registerLookup(eik: string, email: string) {
 }
 
 export async function registerConfirm(payload: Record<string, unknown>) {
-  return partnerFetch<{ status: string; company_name?: string }>(
+  return partnerFetch<{ status: 'pending_approval'; company_name?: string }>(
     "/register/confirm",
     { method: "POST", body: JSON.stringify(payload) },
     false
@@ -202,10 +202,21 @@ export async function partnerLogin(eik: string, password: string) {
   }>("/login", { method: "POST", body: JSON.stringify({ eik, password }) }, false);
 }
 
-export async function resendPartnerPassword(eik: string, email: string) {
+/** Always resolves the same way, whether or not the email belongs to a partner. */
+export async function requestPasswordReset(email: string) {
   return partnerFetch<{ status: string }>(
-    "/password/resend",
-    { method: "POST", body: JSON.stringify({ eik, email }) },
+    "/password/forgot",
+    { method: "POST", body: JSON.stringify({ email }) },
+    false
+  );
+}
+
+export const MIN_PASSWORD_LENGTH = 10;
+
+export async function resetPartnerPassword(token: string, password: string) {
+  return partnerFetch<{ status: string }>(
+    "/password/reset",
+    { method: "POST", body: JSON.stringify({ token, password }) },
     false
   );
 }
@@ -273,6 +284,20 @@ export async function fetchPartnerMe() {
     maps_url: string | null;
     delivery_address: Record<string, string> | null;
   }>("/me");
+}
+
+export type PlaceSuggestion = { place_id: string; name: string; address: string };
+
+export async function searchPartnerPlaces(query: string) {
+  return partnerFetch<{ places: PlaceSuggestion[] }>(`/places/search?q=${encodeURIComponent(query)}`);
+}
+
+/** Sets the delivery address when none is on file, from a Maps link or a picked place. */
+export async function setPartnerDeliveryAddress(body: { maps_url: string } | { place_id: string }) {
+  return partnerFetch<{
+    delivery_address: Record<string, string>;
+    place: { name: string; formatted_address: string | null; maps_url: string };
+  }>("/me/delivery-address", { method: "POST", body: JSON.stringify(body) });
 }
 
 export async function fetchPartnerProducts() {
