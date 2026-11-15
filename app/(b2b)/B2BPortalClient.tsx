@@ -844,6 +844,28 @@ export function B2BPortalClient() {
           <div>
             <h1 style={{ fontSize: 36, fontWeight: 700, marginBottom: 10 }}>Payment & delivery</h1>
             <div style={{ background: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: 10, padding: 20, marginBottom: 24 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
+                {deliveryAddress ? 'Confirm delivery address' : 'Delivery address'}
+              </div>
+              {deliveryAddress ? (
+                <>
+                  <p style={{ fontSize: 14, marginBottom: 12 }}>{addressLine}</p>
+                  {safeExternalUrl(mapsUrl) && (
+                    <a href={safeExternalUrl(mapsUrl)} target="_blank" rel="noopener noreferrer" style={{ fontSize: 13, color: 'var(--ink)', fontWeight: 600 }}>View on Google Maps ↗</a>
+                  )}
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 16, fontSize: 14 }}>
+                    <input type="checkbox" checked={addressConfirmed} onChange={(e) => setAddressConfirmed(e.target.checked)} />
+                    I confirm delivery to this location
+                  </label>
+                </>
+              ) : (
+                <DeliveryAddressPicker
+                  onSaved={({ address, mapsUrl: url }) => {
+                    setDeliveryAddress(address)
+                    if (!mapsUrl) setMapsUrl(url)
+                    setAddressConfirmed(false)
+                  }}
+                />
               )}
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 24 }}>
