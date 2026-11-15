@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { useTranslations } from 'next-intl'
 import { WhaleSVG } from '@/components/whale/WhaleSVG'
 import { DorstLogo } from '@/components/brand/DorstLogo'
+import { DeliveryAddressPicker } from './DeliveryAddressPicker'
 import {
   checkAvailability,
   clearPartnerSession,
@@ -428,6 +429,15 @@ export function B2BPortalClient() {
               <Link href="/partners/tracking" style={{ fontSize: 13, color: '#706E66', textDecoration: 'none' }}>
                 Track order
               </Link>
+              <a
+                href="/brand-book/index.html"
+                target="_blank"
+                rel="noreferrer"
+                title={t('brandBookHint')}
+                style={{ fontSize: 13, color: '#706E66', textDecoration: 'none' }}
+              >
+                {t('brandBook')} ↗
+              </a>
               <button
                 type="button"
                 onClick={() => { clearPartnerSession(); setLoggedIn(false); setShowHistory(false); setScreen(1) }}
@@ -834,15 +844,29 @@ export function B2BPortalClient() {
           <div>
             <h1 style={{ fontSize: 36, fontWeight: 700, marginBottom: 10 }}>Payment & delivery</h1>
             <div style={{ background: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: 10, padding: 20, marginBottom: 24 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Confirm delivery address</div>
-              <p style={{ fontSize: 14, marginBottom: 12 }}>{addressLine}</p>
-              {safeExternalUrl(mapsUrl) && (
-                <a href={safeExternalUrl(mapsUrl)} target="_blank" rel="noopener noreferrer" style={{ fontSize: 13, color: 'var(--ink)', fontWeight: 600 }}>View on Google Maps ↗</a>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
+                {deliveryAddress ? 'Confirm delivery address' : 'Delivery address'}
+              </div>
+              {deliveryAddress ? (
+                <>
+                  <p style={{ fontSize: 14, marginBottom: 12 }}>{addressLine}</p>
+                  {safeExternalUrl(mapsUrl) && (
+                    <a href={safeExternalUrl(mapsUrl)} target="_blank" rel="noopener noreferrer" style={{ fontSize: 13, color: 'var(--ink)', fontWeight: 600 }}>View on Google Maps ↗</a>
+                  )}
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 16, fontSize: 14 }}>
+                    <input type="checkbox" checked={addressConfirmed} onChange={(e) => setAddressConfirmed(e.target.checked)} />
+                    I confirm delivery to this location
+                  </label>
+                </>
+              ) : (
+                <DeliveryAddressPicker
+                  onSaved={({ address, mapsUrl: url }) => {
+                    setDeliveryAddress(address)
+                    if (!mapsUrl) setMapsUrl(url)
+                    setAddressConfirmed(false)
+                  }}
+                />
               )}
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 16, fontSize: 14 }}>
-                <input type="checkbox" checked={addressConfirmed} onChange={(e) => setAddressConfirmed(e.target.checked)} />
-                I confirm delivery to this location
-              </label>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 24 }}>
               {[
@@ -872,7 +896,6 @@ export function B2BPortalClient() {
             </div>
           </div>
         )}
-
         {screen === 5 && (
           <div style={{ background: 'white', border: '1.5px solid var(--line)', borderRadius: 10, padding: '52px 44px', textAlign: 'center' }}>
             <h1 style={{ fontSize: 32, fontWeight: 700, marginBottom: 12 }}>Order confirmed</h1>
