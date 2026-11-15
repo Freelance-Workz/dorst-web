@@ -1,5 +1,6 @@
 'use client'
 
+import { safeExternalUrl } from '@/lib/safe-url'
 import { useState, useReducer, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { useTranslations } from 'next-intl'
@@ -21,7 +22,7 @@ import {
   productGroup,
   registerConfirm,
   registerLookup,
-  resendPartnerPassword,
+  requestPasswordReset,
   setPartnerSession,
   validateDiscount,
   volumeUnitLabel,
@@ -46,13 +47,14 @@ const STEP_KEYS = ['access', 'verify', 'order', 'payment', 'confirm'] as const
 export function B2BPortalClient() {
   const t = useTranslations('B2B')
   const [screen, setScreen] = useState<Screen>(1)
-  const [mode, setMode] = useState<'onboard' | 'login'>('onboard')
+  const [mode, setMode] = useState<'onboard' | 'login' | 'forgot'>('onboard')
   const [eikInput, setEikInput] = useState('')
   const [emailInput, setEmailInput] = useState('')
   const [passwordInput, setPasswordInput] = useState('')
   const [formError, setFormError] = useState('')
   const [loading, setLoading] = useState(false)
-  const [passwordSent, setPasswordSent] = useState(false)
+  // Which banner the login screen shows: a link was requested, or registration awaits approval.
+  const [notice, setNotice] = useState<'' | 'link' | 'pending'>('')
   const [registryDraft, setRegistryDraft] = useState<RegistryDraft | null>(null)
   const [companyName, setCompanyName] = useState('')
   const [mapsUrl, setMapsUrl] = useState('')
@@ -66,6 +68,7 @@ export function B2BPortalClient() {
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'bank' | null>(null)
   const [addressConfirmed, setAddressConfirmed] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [checkingStock, setCheckingStock] = useState(false)
   const [confirmOrder, setConfirmOrder] = useState('')
   const [confirmInvoice, setConfirmInvoice] = useState('')
   const [confirmInvoiceId, setConfirmInvoiceId] = useState('')
@@ -129,9 +132,8 @@ export function B2BPortalClient() {
     setLoading(true)
     try {
       const res = await registerLookup(eikInput.trim(), emailInput.trim())
-      if (res.status === 'password_sent') {
-        setPasswordSent(true)
-        setCompanyName(res.company_name ?? '')
+      if (res.status === 'link_sent') {
+        setNotice('link')
         setMode('login')
       } else if (res.draft) {
         setRegistryDraft(res.draft)
@@ -167,7 +169,7 @@ export function B2BPortalClient() {
         vat_number: registryDraft.vat_number ?? undefined,
         confirm_details: true,
       })
-      setPasswordSent(true)
+      setNotice('pending')
       setMode('login')
       setScreen(1)
     } catch (err) {
@@ -193,19 +195,19 @@ export function B2BPortalClient() {
     }
   }
 
-  async function onResendPassword() {
+  async function onForgotPassword() {
     setFormError('')
-    if (!eikInput.trim() || !emailInput.trim()) {
-      setFormError('Enter EIK and email to resend your password')
+    if (!emailInput.trim()) {
+      setFormError(t('auth.emailRequired'))
       return
     }
     setLoading(true)
     try {
-      await resendPartnerPassword(eikInput.trim(), emailInput.trim())
-      setPasswordSent(true)
+      await requestPasswordReset(emailInput.trim())
+      setNotice('link')
       setMode('login')
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Could not resend password')
+      setFormError(err instanceof Error ? err.message : t('auth.forgotFailed'))
     } finally {
       setLoading(false)
     }
@@ -226,32 +228,45 @@ export function B2BPortalClient() {
     }
   }
 
-  async function onQtyBlur(productId: string) {
-    const requested = qty[productId] ?? 0
+  /**
+   * Checks stock for one line and clamps its quantity. Returns the quantity
+   * that stays in the cart (0 when out of stock).
+   */
+  async function applyStockCheck(productId: string, requested: number): Promise<number> {
     if (requested <= 0) {
       setStockNotes((prev) => {
         const next = { ...prev }
         delete next[productId]
         return next
       })
-      return
+      return 0
     }
+    const res = await checkAvailability(productId, requested)
+    const name = products.find((p) => p.id === productId)?.name ?? 'Product'
+    if (res.out_of_stock) {
+      dispatchQty({ type: 'SET', id: productId, qty: 0 })
+      setStockNotes((prev) => ({ ...prev, [productId]: `${name} is out of stock — removed from your order.` }))
+      return 0
+    }
+    if (res.limited) {
+      dispatchQty({ type: 'SET', id: productId, qty: res.adjusted_quantity })
+      setStockNotes((prev) => ({
+        ...prev,
+        [productId]: `${name}: only ${res.available} available — quantity adjusted to ${res.adjusted_quantity}.`,
+      }))
+      return res.adjusted_quantity
+    }
+    setStockNotes((prev) => {
+      const next = { ...prev }
+      delete next[productId]
+      return next
+    })
+    return requested
+  }
+
+  async function onQtyBlur(productId: string) {
     try {
-      const res = await checkAvailability(productId, requested)
-      if (res.limited || res.out_of_stock) {
-        dispatchQty({ type: 'SET', id: productId, qty: res.adjusted_quantity })
-        const name = products.find((p) => p.id === productId)?.name ?? 'Product'
-        setStockNotes((prev) => ({
-          ...prev,
-          [productId]: `${name}: only ${res.available} available — quantity adjusted to ${res.adjusted_quantity}.`,
-        }))
-      } else {
-        setStockNotes((prev) => {
-          const next = { ...prev }
-          delete next[productId]
-          return next
-        })
-      }
+      await applyStockCheck(productId, qty[productId] ?? 0)
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Stock check failed')
     }
@@ -271,13 +286,28 @@ export function B2BPortalClient() {
     }
   }
 
-  function proceedToPayment() {
-    if (!products.some((p) => (qty[p.id] ?? 0) > 0)) {
+  // Re-checks stock for every line before payment, so a stock clamp can't
+  // land after the partner has moved on and leave an empty order.
+  async function proceedToPayment() {
+    const wanted = products.filter((p) => (qty[p.id] ?? 0) > 0)
+    if (wanted.length === 0) {
       setFormError('Add at least one product')
       return
     }
     setFormError('')
-    setScreen(4)
+    setCheckingStock(true)
+    try {
+      const kept = await Promise.all(wanted.map((p) => applyStockCheck(p.id, qty[p.id] ?? 0)))
+      if (!kept.some((q) => q > 0)) {
+        setFormError('The products you chose are out of stock. Pick other products to continue.')
+        return
+      }
+      setScreen(4)
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Stock check failed')
+    } finally {
+      setCheckingStock(false)
+    }
   }
 
   async function submitOrder() {
@@ -288,6 +318,11 @@ export function B2BPortalClient() {
       const lines = products
         .filter((p) => (qty[p.id] ?? 0) > 0)
         .map((p) => ({ product_id: p.id, quantity: qty[p.id] ?? 0 }))
+      if (lines.length === 0) {
+        setFormError('Your order is empty — the products were out of stock. Go back and pick other products.')
+        setScreen(3)
+        return
+      }
 
       const result = await placePartnerOrder({
         lines,
@@ -310,8 +345,10 @@ export function B2BPortalClient() {
   async function onDownloadInvoice() {
     try {
       const result = await downloadInvoicePdf(confirmInvoiceId)
-      if (result.type === 'url' && result.url) {
-        window.open(result.url, '_blank')
+      if (result.type === 'url') {
+        const fileUrl = safeExternalUrl(result.url)
+        if (!fileUrl) throw new Error('Invoice link is not available')
+        window.open(fileUrl, '_blank', 'noopener,noreferrer')
         return
       }
       if (result.type === 'pdf') {
@@ -447,9 +484,53 @@ export function B2BPortalClient() {
         {screen === 1 && (
           <div>
             <h1 style={{ fontSize: 36, fontWeight: 700, marginBottom: 10 }}>{mode === 'login' ? 'Partner login' : 'Partner access'}</h1>
-            <p style={{ fontSize: 15, color: '#706E66', marginBottom: 32 }}>
-              {passwordSent ? 'Password sent — check your email and sign in.' : 'Enter your company EIK and email to get started.'}
+            <p style={{ fontSize: 15, color: '#706E66', marginBottom: notice ? 20 : 32 }}>
+              {notice === 'pending' ? t('auth.pendingSubtitle') : notice === 'link' ? t('auth.linkSentSubtitle') : mode === 'forgot' ? t('auth.forgotSubtitle') : 'Enter your company EIK and email to get started.'}
             </p>
+            {notice && (
+              <div
+                role="status"
+                aria-live="polite"
+                style={{
+                  display: 'flex',
+                  gap: 14,
+                  alignItems: 'flex-start',
+                  background: '#ECFDF3',
+                  border: '1.5px solid #6CC59A',
+                  borderRadius: 10,
+                  padding: '16px 20px',
+                  marginBottom: 24,
+                  color: '#14532D',
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{
+                    flexShrink: 0,
+                    width: 28,
+                    height: 28,
+                    borderRadius: '50%',
+                    background: '#16A34A',
+                    color: 'white',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 15,
+                    fontWeight: 700,
+                  }}
+                >
+                  ✓
+                </span>
+                <div>
+                  <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>
+                    {notice === 'pending' ? t('auth.pendingTitle') : t('auth.linkSentTitle')}
+                  </div>
+                  <div style={{ fontSize: 14, lineHeight: 1.5 }}>
+                    {notice === 'pending' ? t('auth.pendingBody') : t('auth.linkSentBody')}
+                  </div>
+                </div>
+              </div>
+            )}
             <div style={{ background: 'white', border: '1.5px solid var(--line)', borderRadius: 10, padding: 44 }}>
               <WhaleSVG size="nav" style={{ marginBottom: 28 } as React.CSSProperties} />
               <div style={{ display: 'flex', gap: 8, marginBottom: 24 }}>
@@ -457,14 +538,18 @@ export function B2BPortalClient() {
                   <button
                     key={tab}
                     type="button"
-                    onClick={() => setMode(tab)}
+                    onClick={() => {
+                      setMode(tab)
+                      setNotice('')
+                      setFormError('')
+                    }}
                     style={{
                       flex: 1,
                       padding: '10px 12px',
                       borderRadius: 5,
                       border: '1.5px solid var(--line)',
-                      background: mode === tab ? 'var(--ink)' : 'white',
-                      color: mode === tab ? 'white' : 'var(--ink)',
+                      background: (mode === tab || (tab === 'login' && mode === 'forgot')) ? 'var(--ink)' : 'white',
+                      color: (mode === tab || (tab === 'login' && mode === 'forgot')) ? 'white' : 'var(--ink)',
                       fontWeight: 600,
                       cursor: 'pointer',
                     }}
@@ -476,9 +561,10 @@ export function B2BPortalClient() {
               <form
                 onSubmit={(e) => {
                   e.preventDefault()
-                  void (mode === 'login' ? onLogin() : onRegisterLookup())
+                  void (mode === 'login' ? onLogin() : mode === 'forgot' ? onForgotPassword() : onRegisterLookup())
                 }}
               >
+                {mode !== 'forgot' && (
                 <div style={{ marginBottom: 16 }}>
                   <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 6 }}>ЕИК</label>
                   <input
@@ -490,7 +576,8 @@ export function B2BPortalClient() {
                     style={inputStyle}
                   />
                 </div>
-                {mode === 'onboard' && (
+                )}
+                {(mode === 'onboard' || mode === 'forgot') && (
                   <div style={{ marginBottom: 20 }}>
                     <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 6 }}>Email</label>
                     <input
@@ -504,46 +591,50 @@ export function B2BPortalClient() {
                   </div>
                 )}
                 {mode === 'login' && (
-                  <>
-                    <div style={{ marginBottom: 16 }}>
-                      <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 6 }}>Email (for password resend)</label>
-                      <input
-                        type="email"
-                        name="email"
-                        autoComplete="email"
-                        value={emailInput}
-                        onChange={(e) => setEmailInput(e.target.value)}
-                        style={inputStyle}
-                      />
-                    </div>
-                    <div style={{ marginBottom: 20 }}>
-                      <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 6 }}>Password</label>
-                      <input
-                        type="password"
-                        name="password"
-                        autoComplete="current-password"
-                        value={passwordInput}
-                        onChange={(e) => setPasswordInput(e.target.value)}
-                        style={inputStyle}
-                      />
-                    </div>
-                  </>
+                  <div style={{ marginBottom: 20 }}>
+                    <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 6 }}>Password</label>
+                    <input
+                      type="password"
+                      name="password"
+                      autoComplete="current-password"
+                      value={passwordInput}
+                      onChange={(e) => setPasswordInput(e.target.value)}
+                      style={inputStyle}
+                    />
+                  </div>
                 )}
                 <button
                   type="submit"
                   disabled={loading}
                   style={{ ...btnPrimary, opacity: loading ? 0.6 : 1 }}
                 >
-                  {loading ? 'Please wait…' : mode === 'login' ? 'Sign in →' : 'Continue →'}
+                  {loading ? 'Please wait…' : mode === 'login' ? 'Sign in →' : mode === 'forgot' ? t('auth.forgotSubmit') : 'Continue →'}
                 </button>
                 {mode === 'login' && (
                   <button
                     type="button"
-                    onClick={() => void onResendPassword()}
+                    onClick={() => {
+                      setMode('forgot')
+                      setNotice('')
+                      setFormError('')
+                    }}
                     disabled={loading}
                     style={{ ...btnPrimary, marginTop: 12, background: 'white', color: 'var(--ink)', border: '1.5px solid var(--line)' }}
                   >
-                    Resend password by email
+                    {t('auth.forgotLink')}
+                  </button>
+                )}
+                {mode === 'forgot' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode('login')
+                      setFormError('')
+                    }}
+                    disabled={loading}
+                    style={{ ...btnPrimary, marginTop: 12, background: 'white', color: 'var(--ink)', border: '1.5px solid var(--line)' }}
+                  >
+                    {t('auth.backToLogin')}
                   </button>
                 )}
               </form>
@@ -609,11 +700,11 @@ export function B2BPortalClient() {
                     </>
                   )}
                 </div>
-                {registryDraft.registry_url && (
+                {safeExternalUrl(registryDraft.registry_url) && (
                   <a
-                    href={registryDraft.registry_url}
+                    href={safeExternalUrl(registryDraft.registry_url)}
                     target="_blank"
-                    rel="noreferrer"
+                    rel="noopener noreferrer"
                     style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)', marginTop: 4 }}
                   >
                     Open in Trade Registry ↗
@@ -739,7 +830,13 @@ export function B2BPortalClient() {
                 <span>Total</span><span>€{(totalCents / 100).toFixed(2)}</span>
               </div>
             </div>
-            <button onClick={proceedToPayment} style={{ ...btnPrimary, marginTop: 24 }}>Continue to payment →</button>
+            <button
+              onClick={() => void proceedToPayment()}
+              disabled={checkingStock}
+              style={{ ...btnPrimary, marginTop: 24, opacity: checkingStock ? 0.6 : 1 }}
+            >
+              {checkingStock ? 'Checking stock…' : 'Continue to payment →'}
+            </button>
           </div>
         )}
 
@@ -747,28 +844,6 @@ export function B2BPortalClient() {
           <div>
             <h1 style={{ fontSize: 36, fontWeight: 700, marginBottom: 10 }}>Payment & delivery</h1>
             <div style={{ background: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: 10, padding: 20, marginBottom: 24 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
-                {deliveryAddress ? 'Confirm delivery address' : 'Delivery address'}
-              </div>
-              {deliveryAddress ? (
-                <>
-                  <p style={{ fontSize: 14, marginBottom: 12 }}>{addressLine}</p>
-                  {mapsUrl && (
-                    <a href={mapsUrl} target="_blank" rel="noreferrer" style={{ fontSize: 13, color: 'var(--ink)', fontWeight: 600 }}>View on Google Maps ↗</a>
-                  )}
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 16, fontSize: 14 }}>
-                    <input type="checkbox" checked={addressConfirmed} onChange={(e) => setAddressConfirmed(e.target.checked)} />
-                    I confirm delivery to this location
-                  </label>
-                </>
-              ) : (
-                <DeliveryAddressPicker
-                  onSaved={({ address, mapsUrl: url }) => {
-                    setDeliveryAddress(address)
-                    if (!mapsUrl) setMapsUrl(url)
-                    setAddressConfirmed(false)
-                  }}
-                />
               )}
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 24 }}>
@@ -799,7 +874,6 @@ export function B2BPortalClient() {
             </div>
           </div>
         )}
-
         {screen === 5 && (
           <div style={{ background: 'white', border: '1.5px solid var(--line)', borderRadius: 10, padding: '52px 44px', textAlign: 'center' }}>
             <h1 style={{ fontSize: 32, fontWeight: 700, marginBottom: 12 }}>Order confirmed</h1>
@@ -844,8 +918,10 @@ export function B2BPortalClient() {
                       onClick={async () => {
                         try {
                           const result = await downloadInvoicePdf(inv.id)
-                          if (result.type === 'url' && result.url) {
-                            window.open(result.url, '_blank')
+                          if (result.type === 'url') {
+                            const fileUrl = safeExternalUrl(result.url)
+                            if (!fileUrl) throw new Error('Invoice link is not available')
+                            window.open(fileUrl, '_blank', 'noopener,noreferrer')
                             return
                           }
                           if (result.type === 'pdf') {
