@@ -82,11 +82,20 @@ export function B2BPortalClient() {
   useEffect(() => {
     if (getPartnerToken()) {
       setLoggedIn(true)
-      void bootstrapSession()
+      void bootstrapSession({ restoring: true })
+      return
+    }
+    // Arriving from "Set password" / a link: open the Login tab, ЕИК filled in.
+    const params = new URLSearchParams(window.location.search)
+    if (params.has('login') || params.has('eik')) {
+      setMode('login')
+      const eik = params.get('eik')
+      if (eik) setEikInput(eik)
+      window.history.replaceState(null, '', window.location.pathname + window.location.hash)
     }
   }, [])
 
-  async function bootstrapSession() {
+  async function bootstrapSession({ restoring = false }: { restoring?: boolean } = {}) {
     try {
       const [me, catalog] = await Promise.all([fetchPartnerMe(), fetchPartnerProducts()])
       setCompanyName(me.name)
@@ -98,6 +107,12 @@ export function B2BPortalClient() {
     } catch (err) {
       clearPartnerSession()
       setLoggedIn(false)
+      // A stored session that has expired (or was revoked by a password reset) is normal:
+      // just show the login form. Only report errors right after an explicit sign-in.
+      if (restoring) {
+        setMode('login')
+        return
+      }
       setFormError(err instanceof Error ? err.message : 'Session restore failed')
     }
   }
