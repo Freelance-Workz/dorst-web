@@ -18,6 +18,7 @@ export function ResetPasswordClient() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [done, setDone] = useState(false)
+  const [eik, setEik] = useState<string | null>(null)
 
   // Take the token out of the fragment once, then clear it from the address bar and history.
   useEffect(() => {
@@ -45,7 +46,8 @@ export function ResetPasswordClient() {
     }
     setLoading(true)
     try {
-      await resetPartnerPassword(token, password)
+      const res = await resetPartnerPassword(token, password)
+      setEik(res.eik ?? null)
       setToken('')
       setDone(true)
     } catch {
@@ -91,7 +93,7 @@ export function ResetPasswordClient() {
           <>
             <h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 10 }}>{t('successTitle')}</h1>
             <p style={{ fontSize: 15, color: '#706E66', marginBottom: 24 }}>{t('successBody')}</p>
-            <Link href="/partners/" style={button}>
+            <Link href={eik ? `/partners/?login=1&eik=${encodeURIComponent(eik)}` : '/partners/?login=1'} style={button}>
               {t('goToLogin')}
             </Link>
           </>

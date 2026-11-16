@@ -214,7 +214,7 @@ export async function requestPasswordReset(email: string) {
 export const MIN_PASSWORD_LENGTH = 10;
 
 export async function resetPartnerPassword(token: string, password: string) {
-  return partnerFetch<{ status: string }>(
+  return partnerFetch<{ status: string; eik?: string | null }>(
     "/password/reset",
     { method: "POST", body: JSON.stringify({ token, password }) },
     false
