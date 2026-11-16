@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useTranslations } from 'next-intl'
-import { MIN_PASSWORD_LENGTH, resetPartnerPassword } from '@/lib/partner-api'
+import { checkPasswordLink, MIN_PASSWORD_LENGTH, resetPartnerPassword } from '@/lib/partner-api'
 
 /** Reads `token` from a `#token=…` fragment. */
 function tokenFromHash(hash: string): string {
@@ -19,11 +19,23 @@ export function ResetPasswordClient() {
   const [loading, setLoading] = useState(false)
   const [done, setDone] = useState(false)
   const [eik, setEik] = useState<string | null>(null)
+  const [companyName, setCompanyName] = useState<string | null>(null)
 
   // Take the token out of the fragment once, then clear it from the address bar and history.
   useEffect(() => {
     const found = tokenFromHash(window.location.hash)
     setToken(found)
+    // Show which company this is for; the ЕИК doubles as the username password managers save.
+    if (found) {
+      checkPasswordLink(found)
+        .then((link) => {
+          setEik(link.eik ?? null)
+          setCompanyName(link.company_name ?? null)
+        })
+        .catch(() => {
+          // Invalid or expired: the submit will say so; nothing to show yet.
+        })
+    }
     if (window.location.hash) {
       window.history.replaceState(null, '', window.location.pathname + window.location.search)
     }
@@ -47,7 +59,7 @@ export function ResetPasswordClient() {
     setLoading(true)
     try {
       const res = await resetPartnerPassword(token, password)
-      setEik(res.eik ?? null)
+      if (res.eik) setEik(res.eik)
       setToken('')
       setDone(true)
     } catch {
@@ -102,6 +114,24 @@ export function ResetPasswordClient() {
             <h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 10 }}>{t('heading')}</h1>
             <p style={{ fontSize: 15, color: '#706E66', marginBottom: 24 }}>{t('sub')}</p>
             {token === '' && <p role="alert" style={{ color: '#B42318', marginBottom: 16 }}>{t('missingToken')}</p>}
+            {/* Read-only, not disabled: password managers save this as the username next to
+                the new password, so the login form (ЕИК + password) can be filled later. */}
+            {eik && (
+              <div style={{ marginBottom: 16 }}>
+                <label style={label} htmlFor="reset-eik">
+                  ЕИК{companyName ? ` · ${companyName}` : ''}
+                </label>
+                <input
+                  id="reset-eik"
+                  name="username"
+                  type="text"
+                  autoComplete="username"
+                  value={eik}
+                  readOnly
+                  style={{ ...input, background: '#F5F4F0', color: '#4A4843' }}
+                />
+              </div>
+            )}
             <div style={{ marginBottom: 16 }}>
               <label style={label} htmlFor="new-password">{t('password')}</label>
               <input

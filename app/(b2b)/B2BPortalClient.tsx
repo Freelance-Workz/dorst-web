@@ -50,6 +50,8 @@ export function B2BPortalClient() {
   const [screen, setScreen] = useState<Screen>(1)
   const [mode, setMode] = useState<'onboard' | 'login' | 'forgot'>('onboard')
   const [eikInput, setEikInput] = useState('')
+  // ЕИК registered in this browser session and still waiting for staff approval.
+  const [pendingEik, setPendingEik] = useState<string | null>(null)
   const [emailInput, setEmailInput] = useState('')
   const [passwordInput, setPasswordInput] = useState('')
   const [formError, setFormError] = useState('')
@@ -185,6 +187,7 @@ export function B2BPortalClient() {
         vat_number: registryDraft.vat_number ?? undefined,
         confirm_details: true,
       })
+      setPendingEik(registryDraft.eik.replace(/\s+/g, ''))
       setNotice('pending')
       setMode('login')
       setScreen(1)
@@ -205,6 +208,12 @@ export function B2BPortalClient() {
       setCompanyName(session.client.name)
       await bootstrapSession()
     } catch (err) {
+      // Just registered here and not approved yet: the "registration received" note already
+      // explains why sign-in can't work, so don't add a red "Invalid EIK or password" on top.
+      if (pendingEik && eikInput.replace(/\s+/g, '') === pendingEik) {
+        setNotice('pending')
+        return
+      }
       setFormError(err instanceof Error ? err.message : 'Login failed')
     } finally {
       setLoading(false)
