@@ -213,6 +213,15 @@ export async function requestPasswordReset(email: string) {
 
 export const MIN_PASSWORD_LENGTH = 10;
 
+/** Which company a set/reset link is for, without using the link up. */
+export async function checkPasswordLink(token: string) {
+  return partnerFetch<{ eik: string | null; company_name: string | null; purpose: string }>(
+    "/password/link",
+    { method: "POST", body: JSON.stringify({ token }) },
+    false
+  );
+}
+
 export async function resetPartnerPassword(token: string, password: string) {
   return partnerFetch<{ status: string; eik?: string | null }>(
     "/password/reset",
