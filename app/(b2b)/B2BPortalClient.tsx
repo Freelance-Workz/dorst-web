@@ -50,6 +50,8 @@ export function B2BPortalClient() {
   const [screen, setScreen] = useState<Screen>(1)
   const [mode, setMode] = useState<'onboard' | 'login' | 'forgot'>('onboard')
   const [eikInput, setEikInput] = useState('')
+  // ЕИК registered in this browser session and still waiting for staff approval.
+  const [pendingEik, setPendingEik] = useState<string | null>(null)
   const [emailInput, setEmailInput] = useState('')
   const [passwordInput, setPasswordInput] = useState('')
   const [formError, setFormError] = useState('')
@@ -82,11 +84,20 @@ export function B2BPortalClient() {
   useEffect(() => {
     if (getPartnerToken()) {
       setLoggedIn(true)
-      void bootstrapSession()
+      void bootstrapSession({ restoring: true })
+      return
+    }
+    // Arriving from "Set password" / a link: open the Login tab, ЕИК filled in.
+    const params = new URLSearchParams(window.location.search)
+    if (params.has('login') || params.has('eik')) {
+      setMode('login')
+      const eik = params.get('eik')
+      if (eik) setEikInput(eik)
+      window.history.replaceState(null, '', window.location.pathname + window.location.hash)
     }
   }, [])
 
-  async function bootstrapSession() {
+  async function bootstrapSession({ restoring = false }: { restoring?: boolean } = {}) {
     try {
       const [me, catalog] = await Promise.all([fetchPartnerMe(), fetchPartnerProducts()])
       setCompanyName(me.name)
@@ -98,6 +109,12 @@ export function B2BPortalClient() {
     } catch (err) {
       clearPartnerSession()
       setLoggedIn(false)
+      // A stored session that has expired (or was revoked by a password reset) is normal:
+      // just show the login form. Only report errors right after an explicit sign-in.
+      if (restoring) {
+        setMode('login')
+        return
+      }
       setFormError(err instanceof Error ? err.message : 'Session restore failed')
     }
   }
@@ -170,6 +187,7 @@ export function B2BPortalClient() {
         vat_number: registryDraft.vat_number ?? undefined,
         confirm_details: true,
       })
+      setPendingEik(registryDraft.eik.replace(/\s+/g, ''))
       setNotice('pending')
       setMode('login')
       setScreen(1)
@@ -190,6 +208,12 @@ export function B2BPortalClient() {
       setCompanyName(session.client.name)
       await bootstrapSession()
     } catch (err) {
+      // Just registered here and not approved yet: the "registration received" note already
+      // explains why sign-in can't work, so don't add a red "Invalid EIK or password" on top.
+      if (pendingEik && eikInput.replace(/\s+/g, '') === pendingEik) {
+        setNotice('pending')
+        return
+      }
       setFormError(err instanceof Error ? err.message : 'Login failed')
     } finally {
       setLoading(false)
