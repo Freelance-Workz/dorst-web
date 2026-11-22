@@ -48,7 +48,7 @@ Preview deployments are the staging website: they call the **staging** ERP, neve
 
 ### Partner feedback → GitHub issue → agent PR (pr-goblin)
 
-Signed-in partners on `/partners` get a **Feedback** tab ([pr-goblin](https://github.com/Rumi-Shamz/pr-goblin), vendored in `vendor/pr-goblin/`). A report becomes an issue on this repo, and the scheduled runner (`.github/workflows/goblin.yml`) has an agent open a fix PR into `staging`. Nothing merges on its own.
+Signed-in partners on `/partners` get a **Feedback** tab ([pr-goblin](https://github.com/Rumi-Shamz/pr-goblin), vendored in `vendor/pr-goblin/`). A report becomes an issue on this repo, and the runner (`.github/workflows/goblin.yml`, started by the `goblin` label and an hourly sweep) has an agent open a fix PR into `staging`. Nothing merges on its own.
 
 - **Who:** signed-in partners only. The portal trades the partner's ERP token for a 1-hour HttpOnly cookie (`POST /api/feedback/session`, checked against the ERP's `/api/partner/me`); `/api/feedback` accepts reports only with that cookie and signs the reporter, so partner reports are trusted. Public visitors get no widget.
 - **Public repo:** issues are public. A report names the partner only as `partner:<ERP client id>`, and carries no screenshot, console/network logs or referrer. What the partner types is published as written. `goblin-lock.yml` locks these issues so only collaborators can comment (the agent reads comments).

@@ -6,6 +6,7 @@
 # GOBLIN_GH_TOKEN owner the runner acts as) can still comment on locked issues.
 #
 # Runs whether or not the runner is enabled; it only locks conversations.
+# A thin caller: the logic lives in pr-goblin's reusable workflow.
 
 name: pr-goblin lock
 
@@ -13,25 +14,11 @@ on:
   issues:
     types: [opened, labeled]
 
-permissions:
-  issues: write
+permissions: {}
 
 jobs:
   lock:
-    if: >-
-      !github.event.issue.locked && (
-        contains(github.event.issue.labels.*.name, 'goblin') ||
-        contains(github.event.issue.labels.*.name, 'user-feedback')
-      )
-    runs-on: ubuntu-latest
-    steps:
-      - name: Lock the conversation
-        # An issue filed with labels fires `opened` plus one `labeled` per label,
-        # so several runs race; losing the race (already locked) is success.
-        run: |
-          locked() { [ "$(gh issue view "$NUMBER" --repo "$REPO" --json locked -q .locked)" = "true" ]; }
-          locked || gh issue lock "$NUMBER" --repo "$REPO" || locked
-        env:
-          GH_TOKEN: ${{ github.token }}
-          NUMBER: ${{ github.event.issue.number }}
-          REPO: ${{ github.repository }}
+    permissions:
+      issues: write
+    # TODO: repin to the release tag after Rumi-Shamz/pr-goblin#8 merges
+    uses: Rumi-Shamz/pr-goblin/.github/workflows/goblin-lock.yml@6d4685b4cd7b002e820075299626edf11312a978
