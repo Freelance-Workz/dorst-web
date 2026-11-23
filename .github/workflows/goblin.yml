@@ -47,9 +47,10 @@ jobs:
     uses: Rumi-Shamz/pr-goblin/.github/workflows/goblin-runner.yml@6d4685b4cd7b002e820075299626edf11312a978
     with:
       base-branch: staging
+      app-id: ${{ vars.GOBLIN_APP_ID }}   # ganbare-automation-bot (Freelance-Workz org variable)
       node-version: '22'
       pnpm-version: '9'
     secrets:
-      GOBLIN_GH_TOKEN: ${{ secrets.GOBLIN_GH_TOKEN }}
+      GOBLIN_APP_PRIVATE_KEY: ${{ secrets.GOBLIN_APP_PRIVATE_KEY }}   # org secret
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
