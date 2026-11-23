@@ -8,10 +8,13 @@
 # variables → Actions → Variables). Set it to anything else to stop all runs.
 #
 # Secrets:
-#   GOBLIN_GH_TOKEN          fine-grained PAT, this repo only: Contents, Issues,
-#                            Pull requests read/write. The built-in GITHUB_TOKEN
-#                            is refused on purpose: its commits are authored by
-#                            github-actions[bot], which Vercel won't deploy.
+#   GitHub access            the ganbare-automation-bot App: org variable
+#                            GOBLIN_APP_ID + org secret GOBLIN_APP_PRIVATE_KEY
+#                            (Contents, Issues, Pull requests read/write; 1-hour
+#                            token per run). The built-in GITHUB_TOKEN is refused
+#                            on purpose: commits by github-actions[bot] aren't
+#                            deployed by Vercel. Check Vercel deploys the App's
+#                            ganbare-automation-bot[bot] commits on the first run.
 #   CLAUDE_CODE_OAUTH_TOKEN  the agent on a Claude subscription (`claude setup-token`)
 #     or ANTHROPIC_API_KEY   pay-per-use. If both are set the API key wins.
 #
