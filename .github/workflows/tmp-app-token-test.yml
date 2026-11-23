@@ -1,0 +1,22 @@
+name: tmp-app-token-test
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  mint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - id: app
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ vars.GOBLIN_APP_ID }}
+          private-key: ${{ secrets.GOBLIN_APP_PRIVATE_KEY }}
+      - env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          SLUG: ${{ steps.app.outputs.app-slug }}
+        run: |
+          echo "app slug: $SLUG"
+          gh api "repos/$GITHUB_REPOSITORY" -q '"repo access: \(.full_name) push=\(.permissions.push // "n/a")"'
+          gh api "users/${SLUG}[bot]" -q '"bot user: \(.login) id=\(.id)"'
+          gh api "repos/$GITHUB_REPOSITORY/issues?per_page=1" -q '"issues read ok: \(length)"'
